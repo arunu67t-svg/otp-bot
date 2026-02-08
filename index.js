@@ -1,61 +1,60 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+const qrcode = require('qrcode-terminal'); // Keep for logs if you want
+const QRCode = require('qrcode'); // New library for image
 const express = require('express');
 const app = express();
 
-// 1. Initialize WhatsApp Client
 const client = new Client({
     authStrategy: new LocalAuth({
-        // FIX: Use a new folder to avoid the ENOTDIR crash
         clientId: "client-one",
         dataPath: "auth_folder_new"
     }),
     puppeteer: {
-        // REQUIRED: These arguments allow Chrome to run on the cloud
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
         headless: true
     }
 });
 
-// 2. Generate QR Code
+// Variable to save the QR code
+let qrCodeData = null;
+
+// 1. Save QR to variable when generated
 client.on('qr', (qr) => {
-    console.log('SCAN THIS QR CODE:');
-    qrcode.generate(qr, { small: true });
+    qrCodeData = qr; // Save it to use later
+    console.log('New QR Received!');
+    qrcode.generate(qr, { small: true }); // Print to logs as backup
 });
 
-// 3. Confirm Connection
 client.on('ready', () => {
-    console.log('WhatsApp Client is ready!');
+    console.log('Client is ready!');
 });
 
 client.initialize();
 
-// 4. API Endpoints
-
-// Home Page (Fixes "Cannot GET /")
-app.get('/', (req, res) => {
-    res.send('<h1>Server is Active!</h1><p>Check your Render Logs to scan the QR Code.</p>');
-});
-
-// OTP Sender
-app.get('/send-otp', async (req, res) => {
-    const phone = req.query.phone; 
-    const otp = req.query.otp;
-
-    if (!phone || !otp) {
-        return res.status(400).send('Error: Missing phone or otp');
-    }
-
-    try {
-        const chatId = `${phone}@c.us`;
-        const message = `Your Secure OTP is: *${otp}*`;
-        
-        await client.sendMessage(chatId, message);
-        res.send(`OTP sent to ${phone}`);
-    } catch (error) {
-        res.status(500).send('Failed: ' + error.toString());
+// 2. Show QR on the website
+app.get('/', async (req, res) => {
+    if (qrCodeData) {
+        // Convert QR text to an Image Data URL
+        try {
+            const imgUrl = await QRCode.toDataURL(qrCodeData);
+            res.send(`
+                <div style="display:flex; justify-content:center; align-items:center; height:100vh;">
+                    <div style="text-align:center;">
+                        <h1>Scan this QR Code</h1>
+                        <img src="${imgUrl}" style="width:300px; height:300px; border: 1px solid black;">
+                        <p>Refresh if it expires.</p>
+                    </div>
+                </div>
+            `);
+        } catch (err) {
+            res.send("Error generating QR image.");
+        }
+    } else {
+        res.send("<h1>Waiting for QR Code...</h1><p>Please wait 10 seconds and refresh this page.</p>");
     }
 });
+
+// ... Keep your other /send-otp routes here ...
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
