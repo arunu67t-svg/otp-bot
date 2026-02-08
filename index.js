@@ -3,21 +3,20 @@ const qrcode = require('qrcode-terminal');
 const express = require('express');
 const app = express();
 
-// 1. Initialize WhatsApp Client with the FIX
+// 1. Initialize WhatsApp Client
 const client = new Client({
     authStrategy: new LocalAuth({
-        // THIS FIXES THE ERROR: We force it to use a new folder for login data
-        clientId: "client-one",
-        dataPath: "./auth_folder_new"
+        // FIX: This saves login data to a completely new folder to avoid errors
+        dataPath: 'auth_folder_new'
     }),
     puppeteer: {
-        // These args are required for Render/Heroku free tier
+        // These args are required for the server to run Chrome without crashing
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
         headless: true
     }
 });
 
-// 2. Generate QR Code in the Terminal (Logs)
+// 2. Generate QR Code in the Logs
 client.on('qr', (qr) => {
     console.log('SCAN THIS QR CODE:');
     qrcode.generate(qr, { small: true });
@@ -28,7 +27,7 @@ client.on('ready', () => {
     console.log('WhatsApp Client is ready!');
 });
 
-// 4. Handle Disconnection (Optional: Helps it restart if it fails)
+// 4. Restart if disconnected
 client.on('disconnected', (reason) => {
     console.log('Client was logged out', reason);
     client.initialize();
@@ -36,28 +35,27 @@ client.on('disconnected', (reason) => {
 
 client.initialize();
 
-// 5. API Endpoint to Send OTP
+// 5. API Endpoint
 app.get('/send-otp', async (req, res) => {
-    const phone = req.query.phone; // e.g., 919876543210
+    const phone = req.query.phone;
     const otp = req.query.otp;
 
     if (!phone || !otp) {
-        return res.status(400).send('Error: Missing phone or otp parameters');
+        return res.status(400).send('Error: Missing phone or otp');
     }
 
     try {
-        // Format phone number (Append @c.us for WhatsApp ID)
         const chatId = `${phone}@c.us`;
         const message = `Your Secure OTP is: *${otp}*`;
         
         await client.sendMessage(chatId, message);
-        res.send(`OTP ${otp} sent to ${phone}`);
+        res.send(`OTP Sent to ${phone}`);
     } catch (error) {
         res.status(500).send('Failed: ' + error.toString());
     }
 });
 
-// Start the Web Server
+// Start Server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
