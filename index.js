@@ -6,17 +6,18 @@ const app = express();
 // 1. Initialize WhatsApp Client
 const client = new Client({
     authStrategy: new LocalAuth({
-        // FIX: This saves login data to a completely new folder to avoid errors
-        dataPath: 'auth_folder_new'
+        // FIX: Use a new folder to avoid the ENOTDIR crash
+        clientId: "client-one",
+        dataPath: "auth_folder_new"
     }),
     puppeteer: {
-        // These args are required for the server to run Chrome without crashing
+        // REQUIRED: These arguments allow Chrome to run on the cloud
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
         headless: true
     }
 });
 
-// 2. Generate QR Code in the Logs
+// 2. Generate QR Code
 client.on('qr', (qr) => {
     console.log('SCAN THIS QR CODE:');
     qrcode.generate(qr, { small: true });
@@ -27,17 +28,18 @@ client.on('ready', () => {
     console.log('WhatsApp Client is ready!');
 });
 
-// 4. Restart if disconnected
-client.on('disconnected', (reason) => {
-    console.log('Client was logged out', reason);
-    client.initialize();
-});
-
 client.initialize();
 
-// 5. API Endpoint
+// 4. API Endpoints
+
+// Home Page (Fixes "Cannot GET /")
+app.get('/', (req, res) => {
+    res.send('<h1>Server is Active!</h1><p>Check your Render Logs to scan the QR Code.</p>');
+});
+
+// OTP Sender
 app.get('/send-otp', async (req, res) => {
-    const phone = req.query.phone;
+    const phone = req.query.phone; 
     const otp = req.query.otp;
 
     if (!phone || !otp) {
@@ -49,13 +51,12 @@ app.get('/send-otp', async (req, res) => {
         const message = `Your Secure OTP is: *${otp}*`;
         
         await client.sendMessage(chatId, message);
-        res.send(`OTP Sent to ${phone}`);
+        res.send(`OTP sent to ${phone}`);
     } catch (error) {
         res.status(500).send('Failed: ' + error.toString());
     }
 });
 
-// Start Server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
