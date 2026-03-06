@@ -1,6 +1,6 @@
 const express = require('express');
 const QRCode = require('qrcode');
-const { useMultiFileAuthState, makeWASocket } = require('@adiwajshing/baileys');
+const { useMultiFileAuthState, makeWASocket, fetchLatestWaWebVersion } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 
 const app = express();
@@ -53,43 +53,52 @@ function startKeepAlive() {
 // ==================== WHATSAPP ====================
 async function connectWhatsApp(accountId) {
     const sessionFolder = `./session_${accountId}`;
+
     if (!fs.existsSync(sessionFolder)) {
         fs.mkdirSync(sessionFolder, { recursive: true });
     }
 
+    console.log(`[WA:${accountId}] Starting connection...`);
+
+    const account = {
+        sock: null,
+        connected: false,
+        qr: null,
+        messageCount: 0,
+        reconnectAttempts: 0,
+        error: null
+    };
+    accounts.set(accountId, account);
+
     try {
-        console.log(`[WA:${accountId}] Connecting...`);
         const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+        const { version, isLatest } = await fetchLatestWaWebVersion();
+        console.log(`[WA:${accountId}] using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
         const sock = makeWASocket({
+            version,
             auth: state,
             printQRInTerminal: true,
-            browser: [`WhatsApp-${accountId}`, 'Chrome', '110.0.0']
+            browser: ['Ubuntu', 'Chrome', '20.0.04']
         });
 
-        const account = {
-            sock,
-            connected: false,
-            qr: null,
-            messageCount: 0,
-            reconnectAttempts: 0
-        };
-        accounts.set(accountId, account);
+        account.sock = sock;
 
         sock.ev.on('creds.update', saveCreds);
 
         sock.ev.on('connection.update', (update) => {
             const { connection, qr } = update;
 
+            console.log(`[WA:${accountId}] Connection: ${connection}`);
+
             if (qr) {
                 console.log(`[WA:${accountId}] QR received`);
                 account.qr = qr;
-                account.connected = false;
             }
 
             if (connection === 'close') {
                 const reason = update.lastDisconnect?.error?.message || 'Unknown';
-                console.log(`[WA:${accountId}] Disconnected: ${reason}`);
+                console.log(`[WA:${accountId}] Closed: ${reason}`);
                 account.connected = false;
 
                 if (account.reconnectAttempts < 3) {
@@ -102,6 +111,7 @@ async function connectWhatsApp(accountId) {
                 console.log(`[WA:${accountId}] ✓ Connected!`);
                 account.connected = true;
                 account.qr = null;
+                account.error = null;
                 account.reconnectAttempts = 0;
             }
         });
@@ -112,6 +122,7 @@ async function connectWhatsApp(accountId) {
 
     } catch (error) {
         console.error(`[WA:${accountId}] Error:`, error.message);
+        account.error = error.message;
         setTimeout(() => connectWhatsApp(accountId), 10000);
     }
 }
@@ -121,15 +132,22 @@ function getLandingPage() {
     let accountsHtml = '';
 
     for (const [id, acc] of accounts) {
-        const status = acc.connected
-            ? '<span style="color:#22c55e">● Connected</span>'
-            : acc.qr
-                ? '<span style="color:#f59e0b">● Scan QR</span>'
-                : '<span style="color:#6b7280">● Connecting...</span>';
+        let status = '';
+        if (acc.error) {
+            status = `<span style="color:#dc2626">● Error: ${acc.error}</span>`;
+        } else if (acc.connected) {
+            status = '<span style="color:#22c55e">● Connected</span>';
+        } else if (acc.qr) {
+            status = '<span style="color:#f59e0b">● Scan QR</span>';
+        } else {
+            status = '<span style="color:#6b7280">● Connecting...</span>';
+        }
 
         const actionBtn = acc.connected
-            ? `<button onclick="testSend('${id}')">Test Send</button>`
-            : `<a href="/qr/${id}"><button style="background:#f59e0b">Scan QR</button></a>`;
+            ? `<button onclick="testSend('${id}')">Test</button>`
+            : acc.qr
+                ? `<a href="/qr/${id}"><button style="background:#f59e0b">Scan QR</button></a>`
+                : `<button disabled style="opacity:0.5">Wait...</button>`;
 
         accountsHtml += `
             <div class="account-card">
@@ -178,7 +196,6 @@ function getLandingPage() {
                 text-align: center;
             }
             .header h1 { font-size: 28px; margin-bottom: 10px; }
-            .header p { opacity: 0.9; }
             .stats {
                 display: flex;
                 justify-content: center;
@@ -203,7 +220,7 @@ function getLandingPage() {
             }
             .account-info h3 { color: #1e293b; margin-bottom: 5px; }
             .account-info p { color: #64748b; font-size: 14px; }
-            .account-actions button, .account-actions a button {
+            .account-actions button {
                 padding: 10px 20px;
                 background: #25D366;
                 color: white;
@@ -213,7 +230,6 @@ function getLandingPage() {
                 font-weight: 600;
                 text-decoration: none;
             }
-            .account-actions button:hover { background: #128C7E; }
             .add-btn {
                 display: block;
                 text-align: center;
@@ -224,7 +240,6 @@ function getLandingPage() {
                 color: #64748b;
                 text-decoration: none;
                 font-weight: 600;
-                transition: all 0.3s;
             }
             .add-btn:hover { border-color: #25D366; color: #25D366; }
             .limit-text { text-align: center; color: #94a3b8; padding: 20px; }
@@ -235,7 +250,6 @@ function getLandingPage() {
                 margin: 20px;
                 border-radius: 12px;
             }
-            .api-section h3 { margin-bottom: 15px; color: #25D366; }
             .api-section code {
                 display: block;
                 background: #0f172a;
@@ -243,12 +257,6 @@ function getLandingPage() {
                 border-radius: 8px;
                 font-size: 13px;
                 margin-bottom: 10px;
-                overflow-x: auto;
-            }
-            .api-section .label {
-                color: #94a3b8;
-                font-size: 12px;
-                margin-bottom: 5px;
             }
             .footer {
                 text-align: center;
@@ -270,7 +278,7 @@ function getLandingPage() {
                     <div class="stat-label">Accounts</div>
                 </div>
                 <div class="stat">
-                    <div class="stat-value">${Math.floor((Date.now() - serverStartTime)/1000)}s</div>
+                    <div class="stat-value">${Math.floor((Date.now() - serverStartTime) / 1000)}s</div>
                     <div class="stat-label">Uptime</div>
                 </div>
                 <div class="stat">
@@ -284,9 +292,7 @@ function getLandingPage() {
             </div>
             <div class="api-section">
                 <h3>📡 API Endpoints</h3>
-                <div class="label">Send OTP:</div>
                 <code>/send-otp?phone=1234567890&otp=123456</code>
-                <div class="label">Send Message:</div>
                 <code>/send?phone=1234567890&message=Hello</code>
             </div>
             <div class="footer">
@@ -295,14 +301,16 @@ function getLandingPage() {
         </div>
         <script>
             function testSend(id) {
-                const phone = prompt('Enter phone number (with country code):');
+                const phone = prompt('Enter phone (with country code):');
                 if (phone) {
-                    fetch('/' + id + '/send?phone=' + phone + '&message=Test from ' + id)
+                    fetch('/' + id + '/send?phone=' + phone + '&message=Test')
                         .then(r => r.json())
-                        .then(d => alert(d.success ? 'Message sent!' : 'Error: ' + d.error))
-                        .catch(e => alert('Error: ' + e));
+                        .then(d => alert(d.success ? 'Sent!' : d.error))
+                        .catch(e => alert(e));
                 }
             }
+            // Auto-refresh every 5 seconds
+            setTimeout(() => location.reload(), 5000);
         </script>
     </body>
     </html>
@@ -317,7 +325,7 @@ app.get('/', rateLimit, (req, res) => {
 app.get('/health', (req, res) => {
     const accountStats = {};
     for (const [id, acc] of accounts) {
-        accountStats[id] = { connected: acc.connected, messages: acc.messageCount };
+        accountStats[id] = { connected: acc.connected, messages: acc.messageCount, error: acc.error };
     }
     res.json({
         uptime: Math.floor((Date.now() - serverStartTime) / 1000),
@@ -328,6 +336,7 @@ app.get('/health', (req, res) => {
 
 app.get('/add', (req, res) => {
     const id = 'account' + (accounts.size + 1);
+    console.log('[ADD] Creating:', id);
     connectWhatsApp(id);
     res.redirect('/qr/' + id);
 });
@@ -336,14 +345,26 @@ app.get('/qr/:accountId', async (req, res) => {
     const { accountId } = req.params;
     const acc = accounts.get(accountId);
 
-    if (!acc) return res.redirect('/');
+    if (!acc) {
+        return res.redirect('/add');
+    }
+
+    if (acc.error) {
+        return res.send(`
+            <div style="text-align:center;padding:50px;font-family:Arial;">
+                <h1 style="color:#dc2626;">Error</h1>
+                <p>${acc.error}</p>
+                <a href="/add" style="display:inline-block;margin-top:20px;padding:15px 30px;background:#25D366;color:white;text-decoration:none;border-radius:8px;">Try Again</a>
+            </div>
+        `);
+    }
 
     if (acc.connected) {
         return res.send(`
             <div style="text-align:center;padding:50px;font-family:Arial;">
-                <h1 style="color:#22c55e;">✓ ${accountId} is Connected!</h1>
-                <p>This WhatsApp account is ready to use.</p>
-                <a href="/" style="display:inline-block;margin-top:20px;padding:15px 30px;background:#25D366;color:white;text-decoration:none;border-radius:8px;">← Back to Home</a>
+                <h1 style="color:#22c55e;">✓ Connected!</h1>
+                <p>This account is ready.</p>
+                <a href="/" style="display:inline-block;margin-top:20px;padding:15px 30px;background:#25D366;color:white;text-decoration:none;border-radius:8px;">Home</a>
             </div>
         `);
     }
@@ -351,9 +372,9 @@ app.get('/qr/:accountId', async (req, res) => {
     if (!acc.qr) {
         return res.send(`
             <div style="text-align:center;padding:50px;font-family:Arial;">
-                <h1>⏳ Generating QR Code...</h1>
-                <p>Please wait a few seconds and refresh.</p>
-                <a href="/qr/${accountId}" style="display:inline-block;margin-top:20px;padding:15px 30px;background:#667eea;color:white;text-decoration:none;border-radius:8px;">Refresh</a>
+                <h1>⏳ Generating QR...</h1>
+                <p>Please wait and refresh.</p>
+                <button onclick="location.reload()" style="margin-top:20px;padding:15px 30px;background:#667eea;color:white;border:none;border-radius:8px;cursor:pointer;">Refresh</button>
             </div>
         `);
     }
@@ -363,34 +384,26 @@ app.get('/qr/:accountId', async (req, res) => {
         res.send(`
             <div style="text-align:center;padding:30px;font-family:Arial;max-width:400px;margin:0 auto;">
                 <h2>Scan QR Code</h2>
-                <p style="color:#64748b;margin-bottom:20px;">Account: <strong>${accountId}</strong></p>
+                <p style="color:#64748b;">Account: <strong>${accountId}</strong></p>
                 <img src="${img}" style="width:100%;border:3px solid #333;border-radius:12px;">
                 <p style="margin-top:20px;color:#dc2626;font-weight:bold;">Scan within 45 seconds!</p>
-                <p style="color:#64748b;margin-top:10px;">WhatsApp → Linked Devices → Link Device</p>
-                <a href="/" style="display:inline-block;margin-top:30px;padding:12px 24px;background:#6b7280;color:white;text-decoration:none;border-radius:8px;">← Back</a>
-                <button onclick="location.reload()" style="margin-left:10px;padding:12px 24px;background:#25D366;color:white;border:none;border-radius:8px;cursor:pointer;">Refresh</button>
+                <p style="color:#64748b;">WhatsApp → Linked Devices</p>
+                <button onclick="location.reload()" style="margin-top:20px;padding:12px 24px;background:#25D366;color:white;border:none;border-radius:8px;cursor:pointer;">Refresh</button>
             </div>
         `);
     } catch (e) {
-        res.status(500).send('Error generating QR');
+        res.status(500).send('Error: ' + e.message);
     }
 });
 
-// Send OTP (default account)
+// Send OTP
 app.get('/send-otp', rateLimit, async (req, res) => {
     const { phone, otp } = req.query;
 
     if (!phone || !otp) {
         return res.status(400).json({ error: 'Missing phone or otp' });
     }
-    if (!phone.match(/^\d{10,15}$/)) {
-        return res.status(400).json({ error: 'Invalid phone format' });
-    }
-    if (!otp.match(/^\d{4,6}$/)) {
-        return res.status(400).json({ error: 'Invalid OTP format' });
-    }
 
-    // Use first available connected account
     let account = null;
     for (const [, acc] of accounts) {
         if (acc.connected) {
@@ -406,11 +419,9 @@ app.get('/send-otp', rateLimit, async (req, res) => {
     try {
         const jid = `${phone}@s.whatsapp.net`;
         await account.sock.sendMessage(jid, { text: `Your OTP: *${otp}*` });
-        console.log(`[OTP] Sent to ${phone}`);
-        res.json({ success: true, message: `OTP sent to ${phone}` });
+        res.json({ success: true });
     } catch (error) {
-        console.error('[OTP] Error:', error.message);
-        res.status(500).json({ error: 'Failed to send' });
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -419,7 +430,7 @@ app.get('/send', rateLimit, async (req, res) => {
     const { phone, message } = req.query;
 
     if (!phone || !message) {
-        return res.status(400).json({ error: 'Missing phone or message' });
+        return res.status(400).json({ error: 'Missing params' });
     }
 
     let account = null;
@@ -437,6 +448,23 @@ app.get('/send', rateLimit, async (req, res) => {
     try {
         const jid = `${phone}@s.whatsapp.net`;
         await account.sock.sendMessage(jid, { text: message });
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Account-specific endpoints
+app.get('/:accountId/send', rateLimit, async (req, res) => {
+    const { accountId } = req.params;
+    const { phone, message } = req.query;
+
+    const acc = accounts.get(accountId);
+    if (!acc) return res.status(404).json({ error: 'Account not found' });
+    if (!acc.connected) return res.status(503).json({ error: 'Not connected' });
+
+    try {
+        await acc.sock.sendMessage(`${phone}@s.whatsapp.net`, { text: message });
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ error: error.message });
