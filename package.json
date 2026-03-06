@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-multi-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Multi-Bot using Baileys",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
+    "@adiwajshing/baileys": "^6.7.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

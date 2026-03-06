@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Session/Auth data (already in .gitignore by Render but good to have)
+session/
+auth_folder_new/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug
+npm-debug.log*
